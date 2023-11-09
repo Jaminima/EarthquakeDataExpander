@@ -7,7 +7,7 @@ namespace EarthquakeDataExpander
 {
     internal class CSVRow
     {
-        private string rowStr;
+        public string rowStr;
         private int idx = 0;
 
         public CSVRow(string rowStr) { 
@@ -82,17 +82,23 @@ namespace EarthquakeDataExpander
                         reqDetails.Wait();
                         var resDetails = reqDetails.Result;
 
+                        var getDetailsBody = resDetails.Content.ReadAsStringAsync();
+                        getDetailsBody.Wait();
+                        var detailsBody = getDetailsBody.Result;
+
                         if (resDetails.StatusCode == HttpStatusCode.OK)
                         {
-                            var getDetailsBody = resDetails.Content.ReadAsStringAsync();
-                            getDetailsBody.Wait();
-                            var detailsBody = getDetailsBody.Result;
 
                             var detailsJson = JsonSerializer.Deserialize<JsonElement>(detailsBody);
 
                             var coordinates = detailsJson.GetProperty("geometry").GetProperty("coordinates");
 
                             return new string[] { coordinates[0].GetDouble().ToString(), coordinates[1].GetDouble().ToString(), coordinates[2].GetDouble().ToString() };
+                        }
+                        else if (resDetails.StatusCode == HttpStatusCode.TooManyRequests)
+                        {
+                            Thread.Sleep(10000);
+                            GetDataFromLink(link);
                         }
                     }
                 }
@@ -102,6 +108,10 @@ namespace EarthquakeDataExpander
                     lnk = "https:" + lnk.Substring(0, lnk.IndexOf("\""));
                     return GetDataFromLink(lnk);
                 }
+                else
+                {
+
+                }
 
             }
             return new string[] { };
@@ -109,90 +119,107 @@ namespace EarthquakeDataExpander
 
         static void ProcessRow(CSVRow row)
         {
-            var date = row.nextCell();
-            var tweetId = row.nextCell();
-            var text = row.nextCell();
-            var username = row.nextCell();
-
-            var magnitude = float.TryParse(text.Substring(0, 3), out var _mag) ? _mag : -1;
-            var dist = float.TryParse(text.Substring(27, 3).Split(' ')[0], out var _dist) ? _dist : -1;
-
-            var location = dist == -1 ? text.Substring(27, text.Length - 23 - 27) : text.Substring(29, text.Length - 29 - 24);
-            var locationParts = location.Trim().Split(" ");
-
-            var where = "";
-
-
-            if (locationParts.Length == 1)
+            try
             {
-                where = location;
-            }
-            else if (new[] { "north", "south", "east", "west" }.Any(x => locationParts[0].ToLower().StartsWith(x)))
-            {
-                where = location;
-            }
-            else if (locationParts[1] == "from")
-            {
-                where = String.Join(" ", locationParts.Skip(2));
-            }
-            else if (locationParts[1] == "of")
-            {
-                where = String.Join(" ", locationParts.Skip(1));
-            }
-            else if (locationParts.Length <= 2)
-            {
-                where = location;
-            }
-            else if (locationParts[2] == "of")
-            {
-                where = String.Join(" ", locationParts.Skip(3));
-            }
-            else if (locationParts[2] == "from")
-            {
-                where = String.Join(" ", locationParts.Skip(3));
-            }
-            else if (locationParts.Length <= 3)
-            {
-                where = location;
-            }
-            else if (locationParts[3] == "of")
-            {
-                where = String.Join(" ", locationParts.Skip(4));
-            }
+                var date = row.nextCell();
+                var tweetId = row.nextCell();
+                var text = row.nextCell();
+                var username = row.nextCell();
 
-            var link = text.Substring(text.Length - 23);
+                var magnitude = float.TryParse(text.Substring(0, 3), out var _mag) ? _mag : -1;
+                var dist = float.TryParse(text.Substring(27, 3).Split(' ')[0], out var _dist) ? _dist : -1;
 
-            var newCells = new string[] { date, tweetId, text, username, magnitude.ToString(), dist.ToString(), where, link };
+                var location = dist == -1 ? text.Substring(27, text.Length - 23 - 27) : text.Substring(29, text.Length - 29 - 24);
+                var locationParts = location.Trim().Split(" ");
+                var where = "";
 
-            var r = String.Join(',', newCells.Concat(GetDataFromLink(link)).Select(x => x.Replace(",", "")));
 
-            dstRows.Add(r);
+                if (locationParts.Length == 1)
+                {
+                    where = location;
+                }
+                else if (new[] { "north", "south", "east", "west" }.Any(x => locationParts[0].ToLower().StartsWith(x)))
+                {
+                    where = location;
+                }
+                else if (locationParts[1] == "from")
+                {
+                    where = String.Join(" ", locationParts.Skip(2));
+                }
+                else if (locationParts[1] == "of")
+                {
+                    where = String.Join(" ", locationParts.Skip(1));
+                }
+                else if (locationParts.Length <= 2)
+                {
+                    where = location;
+                }
+                else if (locationParts[2] == "of")
+                {
+                    where = String.Join(" ", locationParts.Skip(3));
+                }
+                else if (locationParts[2] == "from")
+                {
+                    where = String.Join(" ", locationParts.Skip(3));
+                }
+                else if (locationParts.Length <= 3)
+                {
+                    where = location;
+                }
+                else if (locationParts[3] == "of")
+                {
+                    where = String.Join(" ", locationParts.Skip(4));
+                }
 
-            done++;
+                var link = text.Substring(text.Length - 23);
+
+                var newCells = new string[] { date, tweetId, text, username, magnitude.ToString(), dist.ToString(), where, link };
+
+                var r = String.Join(',', newCells.Concat(GetDataFromLink(link)).Select(x => x.Replace(",", "")));
+
+                dstRows.Add(r);
+
+                done++;
+            }
+            catch (Exception e)
+            {
+                ProcessRow(new CSVRow(row.rowStr));
+            }
 
             return;
         }
 
         static void Main(string[] args)
         {
-            CSVRow[] srcRows = File.ReadAllLines(srcCSV).Select(x => new CSVRow(x)).Skip(1).ToArray();
+            CSVRow[] srcRows = File.ReadAllLines(srcCSV).Select(x => new CSVRow(x)).Skip(1).Take(1000).ToArray();
 
-            int steps = 500;
+            int threadLimit = 10;
 
-            for (int i = 0; i < srcRows.Length / steps; i++)
+            var threads = new List<Thread>();
+
+            for (int i = 0; i < srcRows.Length; i++)
             {
-                var tRows = srcRows.Skip(i*steps).Take(steps).Select(x => new Thread(y => ProcessRow(x))).ToArray();
+                var t = new Thread(x => ProcessRow(srcRows[i]));
+                t.Start();
+                threads.Add(t);
 
-                foreach (Thread t in tRows)
-                {
-                    t.Start();
-                }
+                
 
-                while (tRows.Any(x => x.IsAlive))
+                while (threads.Count > threadLimit)
                 {
-                    Console.WriteLine($"Batch {i} - Finished {done}/{srcRows.Length}\r");
+                    while (threads.Count > 0 && !threads[0].IsAlive)
+                    {
+                        threads.RemoveAt(0);
+                    }
+
+                    Console.Write($"Finished {done}/{srcRows.Length}\r");
                     Thread.Sleep(100);
                 }
+            }
+
+            while (threads.Any(x => x.IsAlive))
+            {
+                Thread.Sleep(1000);
             }
 
             File.WriteAllLines(dstCSV,dstRows);
