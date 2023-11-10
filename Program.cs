@@ -191,7 +191,7 @@ namespace EarthquakeDataExpander
 
         static void Main(string[] args)
         {
-            CSVRow[] srcRows = File.ReadAllLines(srcCSV).Select(x => new CSVRow(x)).Skip(1).Take(1000).ToArray();
+            CSVRow[] srcRows = File.ReadAllLines(srcCSV).Select(x => new CSVRow(x)).Skip(1).ToArray();
 
             int threadLimit = 10;
 
